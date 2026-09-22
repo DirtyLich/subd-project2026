@@ -1,5 +1,3 @@
--- V1__init_schema.sql: Создание схемы таблиц новостного агрегатора
-
 CREATE TABLE users (
     user_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(100) NOT NULL,

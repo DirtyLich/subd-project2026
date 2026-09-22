@@ -1,5 +1,3 @@
--- V2__seed_data.sql: Заполнение тестовыми данными
-
 INSERT INTO users (name, email, password_hash, role, status) VALUES
 ('Иван Иванов', 'ivan@example.com', 'hash_pass_1', 'admin', 'active'),
 ('Петр Петров', 'petr@example.com', 'hash_pass_2', 'editor', 'active'),
