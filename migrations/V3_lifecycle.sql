@@ -9,7 +9,6 @@ WHERE email = 'sergey_v3@example.com';
 SELECT * FROM users WHERE email = 'sergey_v3@example.com';
 
 
--- 2. Жизненный цикл сущности "Источник" (sources)
 INSERT INTO sources (name, url, type, update_frequency_minutes) 
 VALUES ('TechCrunch V3', 'https://techcrunch.com/feed_v3_final/', 'rss', 30);
 
@@ -20,7 +19,6 @@ WHERE name = 'TechCrunch V3';
 SELECT * FROM sources WHERE name = 'TechCrunch V3';
 
 
--- 3. Жизненный цикл сущности "Новость" (news)
 INSERT INTO news (source_id, title, summary, content, external_url, published_at) 
 VALUES (1, 'Новый стартап запустил ИИ V3', 'Краткое описание', 'Полный текст новости...', 'https://example.com/ai-startup-v3-final', NOW());
 
