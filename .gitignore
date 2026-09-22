@@ -1,0 +1,22 @@
+# PostgreSQL & Database Client temporary files
+*.log
+*.sql.tmp
+*.dump
+*.tar
+
+# VS Code & Database Client extension files
+.vscode/
+.vscode/*
+*.code-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Docker volumes / temp data
+pgdata/
+data/
+
+# Environment files with sensitive credentials
+.env
+.env.local
