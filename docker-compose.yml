@@ -1,18 +1,37 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
     container_name: postgres_db
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_USER: flyway_user
+      POSTGRES_PASSWORD: flyway_password
       POSTGRES_DB: mydb
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flyway_user -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  flyway:
+    image: flyway/flyway:12-alpine
+    container_name: flyway_runner
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      -url=jdbc:postgresql://postgres:5432/mydb
+      -user=flyway_user
+      -password=flyway_password
+      -locations=filesystem:/flyway/migrations
+      migrate
+    volumes:
+      - ./migrations:/flyway/migrations
+    restart: "no"
 
 volumes:
   pgdata:
