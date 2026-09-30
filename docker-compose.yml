@@ -26,7 +26,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: -url=jdbc:postgresql://db:5432/mydb -user=flyway_user -password=flyway_password -locations=filesystem:/flyway/migrations migrate
+    command: 
+      -url=jdbc:postgresql://db:5432/mydb 
+      -user=flyway_user 
+      -password=flyway_password 
+      -locations=filesystem:/flyway/migrations 
+      -baselineOnMigrate=true
+      -baselineVersion=3
+      migrate
     volumes:
       - ./migrations:/flyway/migrations
     restart: "no"
