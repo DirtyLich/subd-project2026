@@ -1,13 +1,80 @@
+-- ====================================================================
+-- СЦЕНАРИЙ 1: АТОМАРНОСТЬ И СОГЛАСОВАННОСТЬ (Бизнес-операция с COMMIT и ROLLBACK)
+-- Бизнес-задача: Деактивация источника с архивацией его новостей и отпиской пользователей.
+-- ====================================================================
+
+-- 1.1. Успешный сценарий (COMMIT)
 BEGIN;
 
--- Шаг 1: Выключаем источник новостей
-UPDATE sources SET is_active = false WHERE source_id = 5;
+-- Шаг 1: Выключаем источник
+UPDATE sources 
+SET is_active = false 
+WHERE source_id = 5;
 
--- Шаг 2: Прячем все его активные новости в архив
-UPDATE news SET status = 'archived' WHERE source_id = 5 AND status = 'active';
+-- Шаг 2: Архивируем все его активные публикации
+UPDATE news 
+SET status = 'archived' 
+WHERE source_id = 5 AND status = 'active';
 
 -- Шаг 3: Удаляем подписки пользователей на этот источник
-DELETE FROM subscriptions WHERE source_id = 5;
+DELETE FROM subscriptions 
+WHERE source_id = 5;
 
--- Шаг 4: Подтверждаем транзакцию
+COMMIT;
+
+
+-- 1.2. Демонстрация отката при сбое (ROLLBACK)
+-- Если посреди транзакции возникает ошибка целостности (CHECK / FK), СУБД откатывает ВСЕ шаги.
+BEGIN;
+
+UPDATE sources 
+SET is_active = false 
+WHERE source_id = 6;
+
+-- Искусственная ошибка: отрицательная частота обновления (нарушение CHECK update_frequency_minutes > 0)
+UPDATE sources 
+SET update_frequency_minutes = -10 
+WHERE source_id = 6;
+
+-- Данная строка никогда не выполнится из-за ошибки выше:
+ROLLBACK;
+
+
+-- ====================================================================
+-- СЦЕНАРИЙ 2: БЛОКИРОВКИ СТРОК И ПРЕДОТВРАЩЕНИЕ RACE CONDITION (FOR UPDATE)
+-- Бизнес-задача: Два модератора одновременно берут одну и ту же новость на проверку.
+-- ====================================================================
+
+-- Сессия 1: Модератор захватывает новость эксклюзивным локом
+BEGIN;
+SELECT news_id, title, status 
+FROM news 
+WHERE news_id = 100 
+FOR UPDATE;
+
+-- В этот момент Сессия 2 при попытке выполнить аналогичный SELECT ... FOR UPDATE 
+-- встает в ожидание (Lock Wait) до момента COMMIT / ROLLBACK первой сессии.
+
+UPDATE news 
+SET status = 'hidden' 
+WHERE news_id = 100;
+
+COMMIT;
+
+
+-- ====================================================================
+-- СЦЕНАРИЙ 3: УРОВНИ ИЗОЛЯЦИИ (READ COMMITTED vs REPEATABLE READ)
+-- Демонстрация защиты аналитического отчета от фантомных изменений во время расчёта.
+-- ====================================================================
+
+-- На уровне REPEATABLE READ снимок данных (Snapshot) фиксируется на момент первого запроса.
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- Первое чтение агрегата
+SELECT COUNT(*) FROM news WHERE status = 'active';
+
+-- Если в этот момент параллельная сессия вставит или заархивирует новости и сделает COMMIT,
+-- повторный запрос в этой же транзакции вернет РОВНО то же самое число:
+SELECT COUNT(*) FROM news WHERE status = 'active';
+
 COMMIT;
