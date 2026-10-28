@@ -14,6 +14,7 @@
 - [Транзакции и блокировки](#транзакции-и-блокировки)
 - [Оптимизация запросов](#оптимизация-запросов)
 - [Словарь таблиц](#словарь-таблиц)
+- [Спринт 4: Безопасность, репликация и восстановление](#-спринт-4-безопасность-репликация-и-восстановление)
 
 ---
 
@@ -313,4 +314,173 @@ DETAIL: Process 37 waits for ShareLock on transaction 789; blocked by process 36
 
 ---
 
-*PostgreSQL · Python 3.14 · psycopg2 · Faker · Flyway*
+## 🛡️ Спринт 4: Безопасность, репликация и восстановление
+
+В рамках 4-го спринта развернут отказоустойчивый кластер PostgreSQL 17 с потоковой асинхронной репликацией, политиками Row-Level Security (RLS), разграничением прав по принципу наименьших привилегий и регламентом аварийного восстановления.
+
+---
+
+### 📦 Артефакты сдачи
+
+1. **SQL-настройки ролей и политик:**
+   - [`primary/init/01-initialize-cluster.sh`](primary/init/01-initialize-cluster.sh) — создание ролей `course_admin`, `course_app`, `course_analyst`, `replicator`, гранты и `ALTER DEFAULT PRIVILEGES`.
+   - [`primary/init/02-create-domain-schema-and-rls.sql`](primary/init/02-create-domain-schema-and-rls.sql) — схема `app`, таблицы, индексы и политики Row-Level Security (RLS).
+   - [`sql/07-roles-and-permissions-demo.sql`](sql/07-roles-and-permissions-demo.sql) — демонстрация разрешенных и запрещенных операций.
+2. **Инструкция работы с секретами:**
+   - Раздел [2. Работа с секретами](#2-работа-с-секретами) ниже.
+   - [`.env.example`](.env.example) — безопасный шаблон переменных окружения.
+   - [`.gitignore`](.gitignore) — изоляция `.env` и дампов БД от системы контроля версий.
+3. **Команды backup и restore:**
+   - Раздел [5. Резервное копирование и восстановление](#5-резервное-копирование-и-восстановление-backup--restore) ниже.
+   - Раздел 3 в регламенте [`RUNBOOK.md`](RUNBOOK.md).
+4. **Конфигурация репликации:**
+   - [`compose.yaml`](compose.yaml) — конфигурация контейнеров `primary`, `replica`, `restore`.
+   - [`replica/replica-entrypoint.sh`](replica/replica-entrypoint.sh) — скрипт инициализации реплики через `pg_basebackup`.
+5. **Журнал экспериментов с отказами:**
+   - [`EXPERIMENT-LOG.md`](EXPERIMENT-LOG.md) — 4 подробных эксперимента (репликация, остановка replica, остановка primary, backup/restore) с замерами LSN.
+6. **Runbook восстановления:**
+   - [`RUNBOOK.md`](RUNBOOK.md) — регламент дежурного инженера при сбоях (признаки проблемы, диагностика, восстановление, проверка целостности).
+
+---
+
+### 🎯 Выполненный объём требований ТЗ
+
+- [x] **Обязательная часть (8 баллов):** выполнена в полном объеме (роли, запрет superuser для app, демонстрация прав, секреты вне git, backup & restore в чистый инстанс, primary + replica, 2 эксперимента с остановкой узлов, runbook).
+- [x] **Желательная часть (2 выбранных пункта):**
+  1. *Настроить RLS для естественного сценария предметной области* — политики для `app.news` (фильтрация по статусам active/editor) и `app.favorites` (персональная изоляция закладок по `user_id` с `WITH CHECK`).
+  2. *Направить безопасные аналитические запросы на read replica* — запросы роли `course_analyst` направляются на порт реплики `55433` (hot standby).
+- [x] **Восхитительная часть (1 выбранный пункт):**
+  1. *Разработать автоматический тест набора ролей и политик RLS* — скрипт [`scripts/test_security_and_rls.py`](scripts/test_security_and_rls.py), покрывающий 18 проверок.
+
+---
+
+### 1. Архитектура ролей и привилегий
+
+| Роль | Назначение | Права доступа | Ограничения безопасности |
+|---|---|---|---|
+| `course_admin` | Администратор кластера | Владелец схемы `app`, `SUPERUSER` | Полный административный доступ |
+| `course_app` | Бэкенд приложения | `SELECT`, `INSERT`, `UPDATE`, `DELETE` на таблицы `app.*`, `USAGE` на sequences | `NOSUPERUSER`, `NOCREATEROLE`, запрет DDL (`CREATE/DROP TABLE`), запрет доступа к `pg_shadow` |
+| `course_analyst` | BI и аналитика | Только `SELECT` на `app.*` | `NOSUPERUSER`, запрещены любые `INSERT/UPDATE/DELETE`, безопасное чтение с реплики |
+| `replicator` | Сервис потоковой репликации | `REPLICATION`, `LOGIN` | `NOSUPERUSER`, `NOCREATEDB`, разрешено только чтение WAL-потока |
+
+---
+
+### 2. Работа с секретами
+
+- **Изоляция:** Пароли и параметры подключения хранятся исключительно в файле `.env`, который добавлен в `.gitignore` и никогда не попадает в репозиторий.
+- **Шаблон:** Для развертывания предоставлен безопасный файл `.env.example` с плейсхолдерами.
+- **Инициализация:** Для старта скопируйте `.env.example` в `.env` и задайте надежные пароли:
+  ```bash
+  cp .env.example .env
+  ```
+
+---
+
+### 3. Запуск стенда репликации
+
+Инфраструктура описана в `compose.yaml`:
+```bash
+# Запуск Primary и Read-Replica узлов
+docker compose -f compose.yaml up -d primary replica
+
+# Проверка статуса (оба узла должны быть healthy)
+docker compose -f compose.yaml ps
+```
+
+- **Primary:** `127.0.0.1:55432`
+- **Replica:** `127.0.0.1:55433` (read-only, hot standby)
+- **Restore Node:** `127.0.0.1:55434` (профиль `restore`)
+
+---
+
+### 4. Политики Row-Level Security (RLS) — Пункт "Желательно" №1
+
+В схеме `app` включен механизм RLS для двух сущностей предметной области:
+1. **`app.news` (видимость новостей):**
+   - Обычный читатель (`app.current_user_role = 'user'`) видит исключительно опубликованные новости со статусом `active`.
+   - Редакторы и администраторы (`app.current_user_role = 'editor'`) имеют доступ ко всем новостям, включая черновики (`hidden`), дубликаты (`duplicate`) и архивные статьи (`archived`).
+2. **`app.favorites` (изоляция персональных закладок):**
+   - Пользователь видит и может добавлять только свои закладки (`WHERE user_id = current_setting('app.current_user_id')`). Попытка прочесть или вставить чужой `user_id` блокируется политикой `WITH CHECK`.
+
+---
+
+### 5. Безопасные аналитические запросы на Read Replica — Пункт "Желательно" №2
+
+- Аналитическая роль `course_analyst` обладает правами исключительно на чтение (`SELECT`).
+- Все ресурсоемкие аналитические запросы направляются на выделенный узел Read Replica (`127.0.0.1:55433`), что полностью изолирует мастер-узел от аналитической нагрузки.
+- Любые попытки записи или модификации схемы на реплике физически блокируются ядром PostgreSQL (`ERROR: cannot execute INSERT in a read-only transaction`).
+
+---
+
+### 6. Резервное копирование и восстановление (Backup & Restore)
+
+```bash
+# 1. Дамп ролей кластера
+docker exec sprint-04-postgresql-primary-1 pg_dumpall -U course_admin --globals-only > globals.sql
+
+# 2. Создание бинарного дампа базы данных (Custom Format)
+docker exec sprint-04-postgresql-primary-1 pg_dump -U course_admin -d course_app -Fc -f /tmp/course_app.dump
+docker cp sprint-04-postgresql-primary-1:/tmp/course_app.dump ./course_app.dump
+
+# 3. Запуск чистого узла восстановления
+docker compose -f compose.yaml --profile restore up -d restore
+
+# 4. Восстановление в чистый инстанс
+cat globals.sql | docker exec -i sprint-04-postgresql-restore-1 psql -U course_admin -d postgres
+docker cp ./course_app.dump sprint-04-postgresql-restore-1:/tmp/course_app.dump
+docker exec -i sprint-04-postgresql-restore-1 pg_restore -U course_admin -d course_app_restored --clean /tmp/course_app.dump
+```
+
+---
+
+### 7. Автоматическое тестирование — Пункт "Восхитительно" №1
+
+В проекте разработан комплексный автоматический скрипт тестирования ролей, ограничений и RLS:
+```bash
+.venv/bin/python3 scripts/test_security_and_rls.py
+# либо через активированное окружение:
+# source .venv/bin/activate && python scripts/test_security_and_rls.py
+```
+Скрипт проверяет **18 утверждений безопасности**:
+- [x] Проверка прав superuser для `course_admin`
+- [x] Запрет суперпользовательских операций для `course_app` (DDL, `pg_shadow`, `CREATE ROLE`)
+- [x] Read-only ограничения аналитика `course_analyst`
+- [x] Направление аналитических запросов на Read-Replica (порт 55433)
+- [x] Фильтрацию строк RLS для читателей и редакторов
+- [x] Изоляцию персональных данных избранного и защиту от подделки `user_id`
+- [x] Сквозную доставку транзакций через потоковую репликацию
+
+---
+
+### 🎬 Демонстрация и критерии приёмки
+
+Быстрые команды для проверки при приёмке проекта:
+
+1. **Запрет административной операции от имени приложения:**
+   ```bash
+   docker exec -i sprint-04-postgresql-primary-1 psql -U course_admin -d course_app -f /course/sql/07-roles-and-permissions-demo.sql
+   ```
+   *(Демонстрирует отказ при попытке DDL, CREATE ROLE и чтении `pg_shadow` от имени `course_app`)*.
+
+2. **Поступление новой записи на Replica:**
+   ```bash
+   # Запись на Primary:
+   docker exec -i sprint-04-postgresql-primary-1 psql -U course_admin -d course_app -f /course/sql/02-create-probe.sql
+   # Чтение на Replica (запись появляется мгновенно):
+   docker exec -i sprint-04-postgresql-replica-1 psql -U course_admin -d course_app -f /course/sql/04-read-probes.sql
+   ```
+
+3. **Восстановление базы из резервной копии в чистый инстанс:**
+   ```bash
+   docker exec -i sprint-04-postgresql-restore-1 psql -U course_admin -d course_app_restored -f /course/sql/05-integrity-check.sql
+   docker exec -i sprint-04-postgresql-restore-1 psql -U course_admin -d course_app_restored -f /course/sql/06-verify-domain-schema.sql
+   ```
+
+4. **Полный сквозной автотест (все 18 проверок):**
+   ```bash
+   .venv/bin/python3 scripts/test_security_and_rls.py
+   ```
+
+---
+
+*PostgreSQL 17 · Docker Compose · Streaming Replication · Row-Level Security · Python 3*
