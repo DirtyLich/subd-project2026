@@ -33,5 +33,21 @@ services:
       - ./migrations:/flyway/migrations
     restart: "no"
 
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb_db
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+      - ./mongo/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   pgdata:
+  mongodata:

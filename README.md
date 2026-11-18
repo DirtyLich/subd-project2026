@@ -15,6 +15,7 @@
 - [Оптимизация запросов](#оптимизация-запросов)
 - [Словарь таблиц](#словарь-таблиц)
 - [Спринт 4: Безопасность, репликация и восстановление](#-спринт-4-безопасность-репликация-и-восстановление)
+- [Спринт 5: Расширенный SQL и документная модель MongoDB](#-спринт-5-расширенный-sql-и-документная-модель-mongodb)
 
 ---
 
@@ -484,3 +485,99 @@ docker exec -i sprint-04-postgresql-restore-1 pg_restore -U course_admin -d cour
 ---
 
 *PostgreSQL 17 · Docker Compose · Streaming Replication · Row-Level Security · Python 3*
+
+---
+
+## 🍃 Спринт 5: Расширенный SQL и документная модель MongoDB
+
+В рамках 5-го спринта расширена аналитическая часть реляционного ядра PostgreSQL (оконные функции, ранжирование, LAG, скользящие агрегаты, CTE) и спроектирована высокопроизводительная документная модель MongoDB 7.0 с гибридной архитектурой хранения (**Polyglot Persistence**).
+
+### 📦 Артефакты сдачи Спринта 5
+
+1. **Полный каталог SQL-запросов:**
+   - [`scripts/advanced_sql_queries.sql`](scripts/advanced_sql_queries.sql) (и дубликат в [`scripts/business_queries.sql`](scripts/business_queries.sql)) — 8 содержательных аналитических запросов с полным покрытием требований ТЗ.
+2. **Модель владения данными и SSOT:**
+   - Раздел 2 в архитектурном журнале [`ADR-SPRINT-05.md`](ADR-SPRINT-05.md). PostgreSQL — транзакционный источник истины (Single Source of Truth), MongoDB — денормализованная витрина быстрого чтения и интерактивности.
+3. **Диаграмма и описание коллекций:**
+   - Раздел 4 в [`ADR-SPRINT-05.md`](ADR-SPRINT-05.md) — Mermaid-диаграмма сущностей, связь 1:N (комментарии) и связь M:N (теги и закладки).
+4. **Решение Embedding vs Referencing:**
+   - Раздел 5 в [`ADR-SPRINT-05.md`](ADR-SPRINT-05.md) — обоснование выбора через характер чтения, обновлений и размер документа BSON (лимит 16 MB).
+5. **Словарь коллекций и полей (Data Dictionary) — Пункт "Желательно" №2:**
+   - Раздел 6 в [`ADR-SPRINT-05.md`](ADR-SPRINT-05.md) — спецификация типов, индексов и бизнес-правил для `articles`, `user_profiles`, `comments`.
+6. **Полнотекстовый поиск (FTS) в PostgreSQL и его ограничения — Пункт "Желательно" №3:**
+   - [`scripts/postgres_fulltext_search.sql`](scripts/postgres_fulltext_search.sql) и раздел 11 в [`ADR-SPRINT-05.md`](ADR-SPRINT-05.md) — функциональный GIN-индекс, стемминг русской морфологии, ранжирование `ts_rank`, подсветка `ts_headline` и анализ ограничений (Write Amplification, отсутствие опечаточного Fuzzy Search, многоязычность).
+7. **Настройки Schema Validation ($jsonSchema):**
+   - [`mongo/init/01-init-schema.js`](mongo/init/01-init-schema.js) — строгая валидация типов, обязательных полей и бизнес-правил (длина заголовка, regex URL, enum статусов).
+7. **CRUD-сценарии с проверкой валидации:**
+   - [`scripts/mongo_crud_scenarios.js`](scripts/mongo_crud_scenarios.js) — скрипт для `mongosh`.
+   - [`scripts/test_mongo_crud.py`](scripts/test_mongo_crud.py) — автоматический автотест на Python (**13 проверок PASS**).
+8. **Воспроизводимый Backfill данных с контролем повторного запуска — Пункт "Восхитительно" №1:**
+   - [`scripts/backfill_pg_to_mongo.py`](scripts/backfill_pg_to_mongo.py) — потоковый перенос данных из PostgreSQL в MongoDB со встроенным кэшем справочников, batch upsert и фиксацией watermark в `sync_metadata`.
+9. **Автоматическая проверка результатов SQL-запросов — Пункт "Желательно" №1:**
+   - [`scripts/test_advanced_sql.py`](scripts/test_advanced_sql.py) — автотест на Python для всех 8 SQL-запросов (**21 проверка PASS**).
+10. **Журнал архитектурных решений:**
+    - [`ADR-SPRINT-05.md`](ADR-SPRINT-05.md) — полный документ с обоснованиями, сравнением с JSONB и стратегией Schema Versioning.
+
+---
+
+### 📊 Каталог 8 SQL-запросов (PostgreSQL)
+
+| № | Бизнес-сценарий | Обязательное требование ТЗ | Конструкции SQL |
+|---|---|---|---|
+| **1** | Персональная лента по подпискам | Соединение нескольких таблиц (JOIN 4 таблиц) | `JOIN`, `WHERE`, `ORDER BY`, `LIMIT` |
+| **2** | Аналитика активности источников | Агрегатная функция + фильтр | `JOIN`, `COUNT`, `GROUP BY`, `HAVING` |
+| **3** | Топ-10 популярных тегов статьи | Агрегатная функция + JOIN 3 таблиц | `JOIN`, `COUNT`, `GROUP BY`, `ORDER BY` |
+| **4** | Выявление спам-источников дубликатов | Агрегатная функция + фильтр | `JOIN`, `COUNT`, `GROUP BY`, `HAVING` |
+| **5** | Топ-5 вовлеченных читателей | Агрегатная функция | `JOIN`, `COUNT`, `GROUP BY`, `ORDER BY` |
+| **6** | Топ-3 свежих новости в каждой категории | **Оконная: Ранжирование (DENSE_RANK) + CTE** | `DENSE_RANK() OVER (PARTITION BY ... ORDER BY ...)`, `CTE` |
+| **7** | Периодичность публикаций источников | **Оконная: Функция смещения (LAG) + CTE** | `LAG() OVER (PARTITION BY ... ORDER BY ...)`, `CTE`, `EPOCH` |
+| **8** | Накопительный итог и скользящее среднее | **Накопительный и скользящий агрегат + CTE** | `SUM(...) OVER (ROWS UNBOUNDED PRECEDING)`, `AVG(...) OVER (ROWS 2 PRECEDING)`, `CTE` |
+
+---
+
+### 🚀 Быстрый запуск и демонстрация на защите (Спринт 5)
+
+#### 1. Запуск инфраструктуры (PostgreSQL + MongoDB)
+```bash
+docker compose -f docker-compose.yml up -d
+```
+
+#### 2. Запуск автотеста всех 8 SQL-запросов (Пункт "Желательно" №1)
+```bash
+.venv/bin/python3 scripts/test_advanced_sql.py
+```
+
+#### 2.1. Демонстрация полнотекстового поиска FTS в PostgreSQL (Пункт "Желательно" №3)
+```bash
+docker exec -i postgres_db psql -U flyway_user -d mydb < scripts/postgres_fulltext_search.sql
+```
+*(Проверяет синтаксис, структуру колонок, диапазоны рангов `DENSE_RANK <= 3`, положительность интервалов `LAG` и монотонность накопительного итога — **21 из 21 PASS**)*.
+
+#### 3. Демонстрация CRUD и валидации схемы MongoDB ($jsonSchema)
+```bash
+# Вариант А: Запуск в консоли mongosh
+docker exec -i mongodb_db mongosh news_aggregator < scripts/mongo_crud_scenarios.js
+
+# Вариант Б: Автоматический Python-тест (13 из 13 проверок PASS)
+.venv/bin/python3 scripts/test_mongo_crud.py
+```
+
+#### 4. Запуск и проверка идемпотентного Backfill (Пункт "Восхитительно")
+```bash
+# 1. Потоковый перенос первой 1000 документов (со скоростью > 6000 док/сек):
+.venv/bin/python3 scripts/backfill_pg_to_mongo.py --limit 1000
+
+# 2. Проверка текущего статуса и watermark в коллекции sync_metadata:
+.venv/bin/python3 scripts/backfill_pg_to_mongo.py --status
+
+# 3. Дозагрузка следующей партии с сохраненного места:
+.venv/bin/python3 scripts/backfill_pg_to_mongo.py --limit 1000
+
+# 4. Доказательство идемпотентности (повторный накат существующих записей не плодит дубликаты):
+.venv/bin/python3 scripts/backfill_pg_to_mongo.py --reset --limit 500
+# (Выведет: Обработано: 500 | Добавлено: 0 | Обновлено (matched): 500)
+```
+
+---
+
+*PostgreSQL 15/17 · MongoDB 7.0 · PyMongo · Docker Compose · JSON Schema Validation*

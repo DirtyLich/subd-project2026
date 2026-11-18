@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-scripts/test_security_and_rls.py
-Автоматический тест набора ролей, привилегий доступа и политик Row-Level Security (RLS)
-Уровень "Восхитительно" (Спринт 4)
-"""
 import os
 import sys
 import time
