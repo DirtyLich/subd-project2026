@@ -24,3 +24,7 @@ data/
 .venv/
 venv/
 __pycache__/
+
+# Sprint 6 Secrets
+secrets/mongo-keyfile
+.env.mongodb

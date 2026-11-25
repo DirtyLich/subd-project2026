@@ -1,18 +1,14 @@
-/**
- * scripts/mongo_crud_scenarios.js
- * Сценарии CRUD и демонстрация валидации схемы ($jsonSchema) для MongoDB
- * Запуск: docker exec -i mongodb_db mongosh news_aggregator < scripts/mongo_crud_scenarios.js
- */
-
 const db = db.getSiblingDB('news_aggregator');
+
+db.articles.deleteMany({ legacy_id: { $in: [NumberLong('999001'), NumberLong('999002')] } });
+db.user_profiles.deleteMany({ email: 'alex.engineer@example.com' });
+db.article_comments.deleteMany({ author_name: 'Алексей Инженер' });
+
 
 print('==================================================================');
 print(' СЦЕНАРИИ CRUD И ПРОВЕРКА ВАЛИДАЦИИ СХЕМЫ (MONGODB)');
 print('==================================================================');
 
-// -------------------------------------------------------------
-// 1. CREATE: Успешная вставка валидного документа статьи
-// -------------------------------------------------------------
 print('\n--- 1. CREATE: Вставка валидной статьи ---');
 const validArticle = {
   legacy_id: NumberLong('999001'),
@@ -45,9 +41,6 @@ const validArticle = {
 const insertRes = db.articles.insertOne(validArticle);
 print(`[OK] Статья успешно создана, _id: ${insertRes.insertedId}`);
 
-// -------------------------------------------------------------
-// 2. CREATE: Создание профиля пользователя и комментария (Referencing)
-// -------------------------------------------------------------
 print('\n--- 2. CREATE: Связанный профиль и комментарий (1:N Referencing) ---');
 const userProfile = {
   legacy_user_id: NumberLong('501'),
@@ -72,7 +65,6 @@ const userProfile = {
 const userRes = db.user_profiles.insertOne(userProfile);
 print(`[OK] Профиль пользователя создан, _id: ${userRes.insertedId}`);
 
-// Добавление комментария (1:N Referencing: article_id ссылается на articles._id)
 const comment = {
   article_id: insertRes.insertedId,
   author: {
@@ -89,9 +81,6 @@ const comment = {
 const commentRes = db.comments.insertOne(comment);
 print(`[OK] Комментарий к статье создан, _id: ${commentRes.insertedId}`);
 
-// -------------------------------------------------------------
-// 3. READ: Выборка новости со всеми тегами и источником за 1 запрос (без JOIN)
-// -------------------------------------------------------------
 print('\n--- 3. READ: Чтение статьи со встроенными метаданными (O(1) чтение) ---');
 const foundArticle = db.articles.findOne(
   { _id: insertRes.insertedId },
@@ -99,7 +88,6 @@ const foundArticle = db.articles.findOne(
 );
 printjson(foundArticle);
 
-// Агрегация: Сборка статьи с комментариями через $lookup (демонстрация связывания)
 print('\n--- 3.1. READ (Aggregation): Сборка статьи с комментариями через $lookup ---');
 const articleWithComments = db.articles.aggregate([
   { $match: { _id: insertRes.insertedId } },
@@ -123,9 +111,6 @@ const articleWithComments = db.articles.aggregate([
 ]).toArray();
 printjson(articleWithComments);
 
-// -------------------------------------------------------------
-// 4. UPDATE: Атомарное обновление метрик и добавление тега
-// -------------------------------------------------------------
 print('\n--- 4. UPDATE: Атомарное обновление ($inc, $push, $set) ---');
 db.articles.updateOne(
   { _id: insertRes.insertedId },
@@ -138,16 +123,12 @@ db.articles.updateOne(
 const updatedArticle = db.articles.findOne({ _id: insertRes.insertedId }, { metrics: 1, tags: 1, summary: 1 });
 printjson(updatedArticle);
 
-// -------------------------------------------------------------
-// 5. VALIDATION DEMO: Проверка отклонения невалидных документов
-// -------------------------------------------------------------
 print('\n--- 5. NEGATIVE TESTS: Проверка $jsonSchema валидатора ---');
 
-// Тест 5.1: Слишком короткий заголовок (< 5 символов)
 try {
   db.articles.insertOne({
     legacy_id: NumberLong('999002'),
-    title: 'Hi', // < 5 символов!
+    title: 'Hi',
     status: 'active',
     published_at: new Date(),
     source: { source_id: NumberLong('1'), name: 'News' },
@@ -158,12 +139,11 @@ try {
   print('[PASS] Валидатор успешно ОТКЛОНИЛ короткий заголовок (minLength: 5)');
 }
 
-// Тест 5.2: Невалидный статус публикации (нет в enum)
 try {
   db.articles.insertOne({
     legacy_id: NumberLong('999003'),
     title: 'Корректный заголовок статьи',
-    status: 'invalid_status_xyz', // не в enum!
+    status: 'invalid_status_xyz',
     published_at: new Date(),
     source: { source_id: NumberLong('1'), name: 'News' },
     schema_version: 1
@@ -173,13 +153,12 @@ try {
   print('[PASS] Валидатор успешно ОТКЛОНИЛ недопустимый статус (enum: active/hidden/archived/duplicate)');
 }
 
-// Тест 5.3: Некорректный формат URL источника
 try {
   db.articles.insertOne({
     legacy_id: NumberLong('999004'),
     title: 'Корректный заголовок статьи',
     status: 'active',
-    external_url: 'not-a-valid-http-url', // не regex ^https?://
+    external_url: 'not-a-valid-http-url',
     published_at: new Date(),
     source: { source_id: NumberLong('1'), name: 'News' },
     schema_version: 1
@@ -189,9 +168,6 @@ try {
   print('[PASS] Валидатор успешно ОТКЛОНИЛ невалидный external_url (pattern: ^https?://)');
 }
 
-// -------------------------------------------------------------
-// 6. DELETE: Удаление тестового комментария
-// -------------------------------------------------------------
 print('\n--- 6. DELETE: Удаление тестовых документов ---');
 const delRes = db.comments.deleteOne({ _id: commentRes.insertedId });
 print(`[OK] Комментарий удален, deletedCount: ${delRes.deletedCount}`);

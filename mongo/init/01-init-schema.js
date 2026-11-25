@@ -1,19 +1,8 @@
-/**
- * mongo/init/01-init-schema.js
- * Спринт 5: Инициализация документной модели MongoDB
- * Коллекции: articles, user_profiles, comments, sync_metadata
- * Включает: $jsonSchema валидацию типов, обязательных полей, бизнес-правил и индексы.
- */
-
 const dbName = 'news_aggregator';
 const db = db.getSiblingDB(dbName);
 
 print(`--- Инициализация базы данных: ${dbName} ---`);
 
-// ============================================================================
-// 1. Коллекция: articles (Статьи / Витрина новостей)
-// Решение: Embedding для источника (source), категорий и тегов (M:N).
-// ============================================================================
 db.createCollection('articles', {
   validator: {
     $jsonSchema: {
@@ -107,18 +96,12 @@ db.createCollection('articles', {
   validationAction: 'error'
 });
 
-// Индексы для articles
 db.articles.createIndex({ legacy_id: 1 }, { unique: true, sparse: true, name: 'idx_articles_legacy_id_unique' });
 db.articles.createIndex({ status: 1, published_at: -1 }, { name: 'idx_articles_status_published' });
 db.articles.createIndex({ tags: 1 }, { name: 'idx_articles_tags' });
 db.articles.createIndex({ 'source.source_id': 1 }, { name: 'idx_articles_source_id' });
 db.articles.createIndex({ title: 'text', content: 'text' }, { name: 'idx_articles_text_search', default_language: 'russian' });
 
-
-// ============================================================================
-// 2. Коллекция: user_profiles (Профили пользователей и настройки)
-// Решение: Referencing для закладок (M:N), Subset pattern для истории чтения.
-// ============================================================================
 db.createCollection('user_profiles', {
   validator: {
     $jsonSchema: {
@@ -182,15 +165,9 @@ db.createCollection('user_profiles', {
   validationAction: 'error'
 });
 
-// Индексы для user_profiles
 db.user_profiles.createIndex({ legacy_user_id: 1 }, { unique: true, sparse: true, name: 'idx_users_legacy_id_unique' });
 db.user_profiles.createIndex({ email: 1 }, { unique: true, name: 'idx_users_email_unique' });
 
-
-// ============================================================================
-// 3. Коллекция: comments (Комментарии к статьям)
-// Решение: Referencing (1:N) к статье через article_id.
-// ============================================================================
 db.createCollection('comments', {
   validator: {
     $jsonSchema: {
@@ -239,15 +216,9 @@ db.createCollection('comments', {
   validationAction: 'error'
 });
 
-// Индексы для comments
 db.comments.createIndex({ article_id: 1, created_at: -1 }, { name: 'idx_comments_article_date' });
 db.comments.createIndex({ 'author.user_id': 1 }, { name: 'idx_comments_author' });
 
-
-// ============================================================================
-// 4. Коллекция: sync_metadata (Служебная коллекция для идемпотентного Backfill)
-// Уровень "Восхитительно": Контроль повторного запуска и фиксация watermark
-// ============================================================================
 db.createCollection('sync_metadata');
 db.sync_metadata.createIndex({ pipeline_name: 1 }, { unique: true });
 
